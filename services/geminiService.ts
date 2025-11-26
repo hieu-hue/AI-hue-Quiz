@@ -1,7 +1,6 @@
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { QuizData } from '../types';
 
-// Lấy API Key từ biến môi trường
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
 if (!apiKey) {
@@ -10,95 +9,79 @@ if (!apiKey) {
 
 const genAI = new GoogleGenerativeAI(apiKey || '');
 
-// Định nghĩa cấu trúc dữ liệu trả về (Schema)
-const quizSchema = {
-  type: SchemaType.OBJECT,
-  properties: {
-    mcqs: {
-      type: SchemaType.ARRAY,
-      items: {
-        type: SchemaType.OBJECT,
-        properties: {
-          question: { type: SchemaType.STRING, description: "Câu hỏi trắc nghiệm" },
-          options: {
-            type: SchemaType.ARRAY,
-            items: { type: SchemaType.STRING },
-            description: "4 lựa chọn"
-          },
-          correctAnswerIndex: { type: SchemaType.INTEGER, description: "Chỉ số đáp án đúng (0-3)" },
-          explanation: { type: SchemaType.STRING, description: "Giải thích" },
-        },
-        required: ["question", "options", "correctAnswerIndex", "explanation"],
-      },
-    },
-    tfqs: {
-      type: SchemaType.ARRAY,
-      items: {
-        type: SchemaType.OBJECT,
-        properties: {
-          question: { type: SchemaType.STRING, description: "Câu hỏi Đúng/Sai" },
-          isTrue: { type: SchemaType.BOOLEAN, description: "True/False" },
-          explanation: { type: SchemaType.STRING, description: "Giải thích" },
-        },
-        required: ["question", "isTrue", "explanation"],
-      },
-    },
-  },
-  required: ["mcqs", "tfqs"],
-};
-
 export const generateQuiz = async (
   input: string,
   mode: 'text' | 'url',
   fileData?: { mimeType: string; data: string }
 ): Promise<QuizData> => {
   try {
-    // Khởi tạo model với tên phiên bản cụ thể để tránh lỗi 404
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash-001", 
-      systemInstruction: `
-        Bạn là trợ lý giáo dục AI-hue-Quiz.
-        Nhiệm vụ: Tạo bài kiểm tra từ nội dung được cung cấp.
-        Yêu cầu:
-        1. 15 câu trắc nghiệm (MCQ).
-        2. 5 câu Đúng/Sai.
-        3. Ngôn ngữ: Tiếng Việt.
-        4. Trả về đúng định dạng JSON.
-      `,
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: quizSchema,
-      }
-    });
+    // CHUYỂN VỀ MODEL GEMINI-PRO (Ổn định nhất)
+    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
-    let promptParts: any[] = [];
-
-    // Xử lý đầu vào tùy theo chế độ (URL, Văn bản, hoặc File)
-    if (mode === 'url') {
-      promptParts = [{ text: `Hãy phân tích nội dung quan trọng từ chủ đề/đường dẫn này và tạo bài kiểm tra: ${input}` }];
-    } else if (mode === 'text' && !fileData) {
-      promptParts = [{ text: `Phân tích văn bản sau:\n\n${input}` }];
-    } else if (fileData) {
-      promptParts = [
-        {
-          inlineData: {
-            mimeType: fileData.mimeType,
-            data: fileData.data
+    // Hướng dẫn chi tiết cho Gemini Pro để trả về đúng JSON
+    const systemPrompt = `
+      Bạn là trợ lý giáo dục AI-hue-Quiz.
+      Nhiệm vụ: Tạo bài kiểm tra trắc nghiệm từ nội dung người dùng cung cấp.
+      
+      YÊU CẦU BẮT BUỘC VỀ ĐỊNH DẠNG (JSON):
+      Chỉ trả về duy nhất một chuỗi JSON hợp lệ, không có Markdown, không có dấu backtick (\`\`\`).
+      Cấu trúc JSON phải chính xác như sau:
+      {
+        "mcqs": [
+          {
+            "question": "Câu hỏi trắc nghiệm 1",
+            "options": ["A", "B", "C", "D"],
+            "correctAnswerIndex": 0,
+            "explanation": "Giải thích"
           }
-        },
-        { text: input || "Tạo bài kiểm tra từ file này." }
-      ];
+          // ... thêm 14 câu nữa (tổng 15 câu)
+        ],
+        "tfqs": [
+          {
+            "question": "Câu hỏi đúng sai 1",
+            "isTrue": true,
+            "explanation": "Giải thích"
+          }
+          // ... thêm 4 câu nữa (tổng 5 câu)
+        ]
+      }
+      
+      Nội dung cần xử lý:
+    `;
+
+    let promptParts: any[] = [systemPrompt];
+
+    if (mode === 'url') {
+      promptParts.push(`Hãy phân tích nội dung từ đường dẫn này: ${input}`);
+    } else if (mode === 'text' && !fileData) {
+      promptParts.push(`Phân tích văn bản sau:\n\n${input}`);
+    } else if (fileData) {
+      promptParts.push({
+        inlineData: {
+          mimeType: fileData.mimeType,
+          data: fileData.data
+        }
+      });
+      promptParts.push(input || "Tạo bài kiểm tra từ file đính kèm.");
     }
 
-    // Gửi yêu cầu đến Gemini
     const result = await model.generateContent(promptParts);
     const response = await result.response;
-    const text = response.text();
+    let text = response.text();
 
     if (!text) throw new Error("Không nhận được phản hồi từ AI.");
 
-    // Chuyển đổi kết quả từ văn bản sang JSON
+    // LÀM SẠCH KẾT QUẢ (Vì Gemini Pro hay thêm dấu ```json vào đầu)
+    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+    // Parse JSON
     const parsedData = JSON.parse(text) as QuizData;
+    
+    // Kiểm tra dữ liệu
+    if (!parsedData.mcqs || parsedData.mcqs.length === 0) {
+        throw new Error("AI không tạo được câu hỏi nào.");
+    }
+
     return parsedData;
 
   } catch (error) {
