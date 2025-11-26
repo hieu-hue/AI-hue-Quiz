@@ -1,47 +1,45 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { QuizData } from '../types';
 
-const apiKey = process.env.API_KEY;
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
 if (!apiKey) {
-  console.error("API_KEY is missing from environment variables.");
+  console.error("VITE_GEMINI_API_KEY is missing. Check .env file");
 }
 
-const ai = new GoogleGenAI({ apiKey: apiKey || '' });
+const genAI = new GoogleGenerativeAI(apiKey || '');
 
-const quizSchema: Schema = {
-  type: Type.OBJECT,
+const quizSchema = {
+  type: SchemaType.OBJECT,
   properties: {
     mcqs: {
-      type: Type.ARRAY,
+      type: SchemaType.ARRAY,
       items: {
-        type: Type.OBJECT,
+        type: SchemaType.OBJECT,
         properties: {
-          question: { type: Type.STRING, description: "Câu hỏi trắc nghiệm" },
+          question: { type: SchemaType.STRING, description: "Câu hỏi trắc nghiệm" },
           options: {
-            type: Type.ARRAY,
-            items: { type: Type.STRING },
-            description: "4 lựa chọn cho câu hỏi",
+            type: SchemaType.ARRAY,
+            items: { type: SchemaType.STRING },
+            description: "4 lựa chọn"
           },
-          correctAnswerIndex: { type: Type.INTEGER, description: "Chỉ số của đáp án đúng (0-3)" },
-          explanation: { type: Type.STRING, description: "Giải thích ngắn gọn tại sao đáp án này đúng" },
+          correctAnswerIndex: { type: SchemaType.INTEGER, description: "Chỉ số đáp án đúng (0-3)" },
+          explanation: { type: SchemaType.STRING, description: "Giải thích" },
         },
         required: ["question", "options", "correctAnswerIndex", "explanation"],
       },
-      description: "Danh sách 15 câu hỏi trắc nghiệm",
     },
     tfqs: {
-      type: Type.ARRAY,
+      type: SchemaType.ARRAY,
       items: {
-        type: Type.OBJECT,
+        type: SchemaType.OBJECT,
         properties: {
-          question: { type: Type.STRING, description: "Câu hỏi Đúng/Sai" },
-          isTrue: { type: Type.BOOLEAN, description: "True nếu đúng, False nếu sai" },
-          explanation: { type: Type.STRING, description: "Giải thích ngắn gọn" },
+          question: { type: SchemaType.STRING, description: "Câu hỏi Đúng/Sai" },
+          isTrue: { type: SchemaType.BOOLEAN, description: "True/False" },
+          explanation: { type: SchemaType.STRING, description: "Giải thích" },
         },
         required: ["question", "isTrue", "explanation"],
       },
-      description: "Danh sách 5 câu hỏi Đúng/Sai",
     },
   },
   required: ["mcqs", "tfqs"],
@@ -53,79 +51,52 @@ export const generateQuiz = async (
   fileData?: { mimeType: string; data: string }
 ): Promise<QuizData> => {
   try {
-    const modelId = 'gemini-2.5-flash';
-    
-    let contents: any = [];
-    let tools: any = undefined;
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      systemInstruction: `
+        Bạn là trợ lý giáo dục AI-hue-Quiz.
+        Nhiệm vụ: Tạo bài kiểm tra từ nội dung được cung cấp.
+        Yêu cầu:
+        1. 15 câu trắc nghiệm (MCQ).
+        2. 5 câu Đúng/Sai.
+        3. Ngôn ngữ: Tiếng Việt.
+        4. Trả về đúng định dạng JSON.
+      `,
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: quizSchema,
+      }
+    });
 
-    const systemInstruction = `
-      Bạn là một trợ lý giáo dục AI thông minh có tên là AI-hue-Quiz.
-      Nhiệm vụ của bạn là tạo ra một bài kiểm tra kiến thức dựa trên nội dung được cung cấp.
-      
-      Yêu cầu bắt buộc:
-      1. Tạo chính xác 15 câu hỏi trắc nghiệm (MCQ) với 4 lựa chọn.
-      2. Tạo chính xác 5 câu hỏi Đúng/Sai (True/False).
-      3. Ngôn ngữ câu hỏi và giải thích: Tiếng Việt.
-      4. Giải thích phải ngắn gọn, súc tích và mang tính giáo dục.
-      5. Đảm bảo nội dung câu hỏi bám sát dữ liệu đầu vào.
-    `;
+    let promptParts: any[] = [];
 
     if (mode === 'url') {
-      // Use Search grounding for URLs to get context
-      tools = [{ googleSearch: {} }];
-      contents = [
-        {
-          text: `Hãy phân tích nội dung từ đường dẫn sau và tạo bài kiểm tra: ${input}`,
-        },
-      ];
+      promptParts = [{ text: `Hãy phân tích nội dung quan trọng từ chủ đề/đường dẫn này và tạo bài kiểm tra: ${input}` }];
     } else if (mode === 'text' && !fileData) {
-      contents = [
-        {
-          text: `Hãy phân tích văn bản sau và tạo bài kiểm tra:\n\n${input}`,
-        },
-      ];
+      promptParts = [{ text: `Phân tích văn bản sau:\n\n${input}` }];
     } else if (fileData) {
-      // File mode (Video or Text file)
-      contents = [
+      promptParts = [
         {
           inlineData: {
             mimeType: fileData.mimeType,
-            data: fileData.data,
-          },
+            data: fileData.data
+          }
         },
-        {
-          text: input || "Hãy phân tích tệp đính kèm này và tạo bài kiểm tra.",
-        },
+        { text: input || "Tạo bài kiểm tra từ file này." }
       ];
     }
 
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: contents,
-      config: {
-        systemInstruction: systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: quizSchema,
-        tools: tools,
-      },
-    });
+    const result = await model.generateContent(promptParts);
+    const response = await result.response;
+    const text = response.text();
 
-    const text = response.text;
-    if (!text) {
-      throw new Error("No response generated from Gemini.");
-    }
+    if (!text) throw new Error("Không nhận được phản hồi từ AI.");
 
     const parsedData = JSON.parse(text) as QuizData;
-    
-    // Basic validation to ensure we have enough questions
-    if (!parsedData.mcqs || parsedData.mcqs.length === 0) {
-      throw new Error("Dữ liệu câu hỏi không hợp lệ.");
-    }
-
     return parsedData;
 
   } catch (error) {
-    console.error("Error generating quiz:", error);
+    console.error("Lỗi khi tạo quiz:", error);
     throw error;
   }
 };
