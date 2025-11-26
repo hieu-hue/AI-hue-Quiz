@@ -1,0 +1,5 @@
+{
+  "name": "AI-hue-Quiz",
+  "description": "Ứng dụng tạo bài trắc nghiệm thông minh từ văn bản hoặc video sử dụng công nghệ Gemini AI.",
+  "requestFramePermissions": []
+}
