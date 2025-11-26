@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { QuizData } from '../types';
 
+// Lấy API Key từ biến môi trường
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
 
 if (!apiKey) {
@@ -9,6 +10,7 @@ if (!apiKey) {
 
 const genAI = new GoogleGenerativeAI(apiKey || '');
 
+// Định nghĩa cấu trúc dữ liệu trả về (Schema)
 const quizSchema = {
   type: SchemaType.OBJECT,
   properties: {
@@ -51,8 +53,9 @@ export const generateQuiz = async (
   fileData?: { mimeType: string; data: string }
 ): Promise<QuizData> => {
   try {
+    // Khởi tạo model với tên phiên bản cụ thể để tránh lỗi 404
     const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+      model: "gemini-1.5-flash-001", 
       systemInstruction: `
         Bạn là trợ lý giáo dục AI-hue-Quiz.
         Nhiệm vụ: Tạo bài kiểm tra từ nội dung được cung cấp.
@@ -70,6 +73,7 @@ export const generateQuiz = async (
 
     let promptParts: any[] = [];
 
+    // Xử lý đầu vào tùy theo chế độ (URL, Văn bản, hoặc File)
     if (mode === 'url') {
       promptParts = [{ text: `Hãy phân tích nội dung quan trọng từ chủ đề/đường dẫn này và tạo bài kiểm tra: ${input}` }];
     } else if (mode === 'text' && !fileData) {
@@ -86,12 +90,14 @@ export const generateQuiz = async (
       ];
     }
 
+    // Gửi yêu cầu đến Gemini
     const result = await model.generateContent(promptParts);
     const response = await result.response;
     const text = response.text();
 
     if (!text) throw new Error("Không nhận được phản hồi từ AI.");
 
+    // Chuyển đổi kết quả từ văn bản sang JSON
     const parsedData = JSON.parse(text) as QuizData;
     return parsedData;
 
